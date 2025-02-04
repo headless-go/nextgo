@@ -1,0 +1,60 @@
+//{{.Doc}}
+func {{.Name}}HandleFunc(chain {{.AliceChainPackage.Alias}}.Chain, opt {{.RouteInfoPackage.Alias}}.Option) {{.GoHttpPackage.Alias}}.Handler{
+
+	routeInfo := {{.RouteInfoPackage.Alias}}.RouteInfo {
+				Patten: "{{.Patten}}",
+				Desc: "{{.Doc}}",
+				HTTPMethod: "{{.With.HttpMethod}}",
+				HandlerFuncName: "{{.Name}}",
+				Request: []any{ {{range .RequestArgs}} {{if eq .Location "body"}} {{.Type.PackageName}}{}, {{end}}{{end}} },
+				Middleware: []string{ {{range .Middlewares}} "{{.}}", {{end}} },
+				Label: map[string]string{
+				{{range $key,$value := .With.Label}} "{{$key}}" : "{{$value}}",
+				{{end}}
+				},
+    }
+	opt.AddRoute(routeInfo)
+
+	chain = {{.AliceChainPackage.Alias}}.New({{.RouteInfoPackage.Alias}}.WithRouteInfo(&routeInfo)).Extend(chain)
+	handleFunc := func(rw {{.GoHttpPackage.Alias}}.ResponseWriter, req *{{.GoHttpPackage.Alias}}.Request) {
+		{{range $arg := .RequestArgs}} {{if eq $arg.Location "path"}}
+		var {{$arg.Name}} {{$arg.Type.PackageName}}
+		if err := opt.DecodePath(req, "{{$arg.PathParamName}}", &{{$arg.Name}}); err != nil {
+			_ = opt.EncodeError(rw, err)
+			return
+		}
+		{{else if eq $arg.Type.FullName "context.Context"}} {{$arg.Name}} := req.Context()
+		{{else if eq $arg.Type.FullName "net/http.Request"}}
+		    {{if ne $arg.Name "req"}}{{$arg.Name}} := req {{end}}
+		{{else if eq $arg.Type.FullName "net/http.ResponseWriter"}}
+		    {{if ne $arg.Name "rw"}} {{$arg.Name}} := rw {{end}}
+		{{else}}
+			var {{$arg.Name}} {{$arg.Type.PackageName}}
+		    {{if eq $arg.Location "query"}}
+		    if err:=opt.DecodeQuery(req, &{{$arg.Name}});err!=nil{
+		    {{else if eq $arg.Location "header"}}
+		    if err:=opt.DecodeHeader(req, &{{$arg.Name}});err!=nil{
+		    {{else}}
+		    if err:=opt.Decode(req, &{{$arg.Name}});err!=nil{
+		    {{end}}
+		    _ = opt.EncodeError(rw, err)
+        	return
+        	}
+        	if err := opt.Struct({{$arg.Name}}); err != nil {
+            	_ = opt.EncodeError(rw, err)
+            	return
+            }
+        {{end}} {{end}}
+		{
+			{{range $i, $arg := .ResponseResult}} {{if $i}},{{end}} {{$arg.Name}}{{end}} {{if .ResponseResult}} := {{end}}{{.PackageName}}.{{.Name}}({{range $i, $arg := .RequestArgs}}{{if $i}},{{end}} {{$arg.Name}}{{end}})
+			{{range $arg := .ResponseResult}} {{if eq $arg.Type.FullName "error"}} if {{$arg.Name}} != nil {
+			        _ = opt.EncodeError(rw, {{$arg.Name}})
+			        return
+			} {{end}} {{end}}
+			{{range $arg := .ResponseResult}} {{if ne $arg.Type.FullName "error"}}
+			    _ = opt.Encode(rw, {{$arg.Name}}) {{end}}
+		    {{end}}
+		}
+	}
+	return chain.ThenFunc(handleFunc)
+}
